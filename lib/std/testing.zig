@@ -43,13 +43,16 @@ pub fn expectError(expected_error: anyerror, actual_error_union: anytype) !void 
 /// equal, prints diagnostics to stderr to show exactly how they are not equal,
 /// then returns a test failure error.
 /// `actual` is casted to the type of `expected`.
-pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void {
-    switch (@typeInfo(@TypeOf(actual))) {
+pub fn expectEqual(expected: anytype, actual: anytype) !void {
+    const T = @TypeOf(actual, expected);
+    const expected_coerced = @as(T, expected);
+    const actual_coerced = @as(T, actual);
+    switch (@typeInfo(@TypeOf(actual_coerced))) {
         .NoReturn,
         .Opaque,
         .Frame,
         .AnyFrame,
-        => @compileError("value of type " ++ @typeName(@TypeOf(actual)) ++ " encountered"),
+        => @compileError("value of type " ++ @typeName(@TypeOf(actual_coerced)) ++ " encountered"),
 
         .Undefined,
         .Null,
@@ -57,8 +60,8 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void {
         => return,
 
         .Type => {
-            if (actual != expected) {
-                std.debug.print("expected type {s}, found type {s}\n", .{ @typeName(expected), @typeName(actual) });
+            if (actual_coerced != expected_coerced) {
+                std.debug.print("expected type {s}, found type {s}\n", .{ @typeName(expected_coerced), @typeName(actual_coerced) });
                 return error.TestExpectedEqual;
             }
         },
@@ -73,8 +76,8 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void {
         .Fn,
         .ErrorSet,
         => {
-            if (actual != expected) {
-                std.debug.print("expected {}, found {}\n", .{ expected, actual });
+            if (actual_coerced != expected_coerced) {
+                std.debug.print("expected {}, found {}\n", .{ expected_coerced, actual_coerced });
                 return error.TestExpectedEqual;
             }
         },
@@ -82,32 +85,32 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void {
         .Pointer => |pointer| {
             switch (pointer.size) {
                 .One, .Many, .C => {
-                    if (actual != expected) {
-                        std.debug.print("expected {*}, found {*}\n", .{ expected, actual });
+                    if (actual_coerced != expected_coerced) {
+                        std.debug.print("expected {*}, found {*}\n", .{ expected_coerced, actual_coerced });
                         return error.TestExpectedEqual;
                     }
                 },
                 .Slice => {
-                    if (actual.ptr != expected.ptr) {
-                        std.debug.print("expected slice ptr {*}, found {*}\n", .{ expected.ptr, actual.ptr });
+                    if (actual_coerced.ptr != expected_coerced.ptr) {
+                        std.debug.print("expected slice ptr {*}, found {*}\n", .{ expected_coerced.ptr, actual_coerced.ptr });
                         return error.TestExpectedEqual;
                     }
-                    if (actual.len != expected.len) {
-                        std.debug.print("expected slice len {}, found {}\n", .{ expected.len, actual.len });
+                    if (actual_coerced.len != expected_coerced.len) {
+                        std.debug.print("expected slice len {}, found {}\n", .{ expected_coerced.len, actual_coerced.len });
                         return error.TestExpectedEqual;
                     }
                 },
             }
         },
 
-        .Array => |array| try expectEqualSlices(array.child, &expected, &actual),
+        .Array => |array| try expectEqualSlices(array.child, &expected_coerced, &actual_coerced),
 
         .Vector => |info| {
             var i: usize = 0;
             while (i < info.len) : (i += 1) {
-                if (!std.meta.eql(expected[i], actual[i])) {
+                if (!std.meta.eql(expected_coerced[i], actual_coerced[i])) {
                     std.debug.print("index {} incorrect. expected {}, found {}\n", .{
-                        i, expected[i], actual[i],
+                        i, expected_coerced[i], actual_coerced[i],
                     });
                     return error.TestExpectedEqual;
                 }
@@ -116,7 +119,7 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void {
 
         .Struct => |structType| {
             inline for (structType.fields) |field| {
-                try expectEqual(@field(expected, field.name), @field(actual, field.name));
+                try expectEqual(@field(expected_coerced, field.name), @field(actual_coerced, field.name));
             }
         },
 
@@ -125,17 +128,17 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void {
                 @compileError("Unable to compare untagged union values");
             }
 
-            const Tag = std.meta.Tag(@TypeOf(expected));
+            const Tag = std.meta.Tag(@TypeOf(expected_coerced));
 
-            const expectedTag = @as(Tag, expected);
-            const actualTag = @as(Tag, actual);
+            const expectedTag = @as(Tag, expected_coerced);
+            const actualTag = @as(Tag, actual_coerced);
 
             try expectEqual(expectedTag, actualTag);
 
             // we only reach this loop if the tags are equal
-            inline for (std.meta.fields(@TypeOf(actual))) |fld| {
+            inline for (std.meta.fields(@TypeOf(actual_coerced))) |fld| {
                 if (std.mem.eql(u8, fld.name, @tagName(actualTag))) {
-                    try expectEqual(@field(expected, fld.name), @field(actual, fld.name));
+                    try expectEqual(@field(expected_coerced, fld.name), @field(actual_coerced, fld.name));
                     return;
                 }
             }
@@ -147,15 +150,15 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void {
         },
 
         .Optional => {
-            if (expected) |expected_payload| {
-                if (actual) |actual_payload| {
+            if (expected_coerced) |expected_payload| {
+                if (actual_coerced) |actual_payload| {
                     try expectEqual(expected_payload, actual_payload);
                 } else {
                     std.debug.print("expected {any}, found null\n", .{expected_payload});
                     return error.TestExpectedEqual;
                 }
             } else {
-                if (actual) |actual_payload| {
+                if (actual_coerced) |actual_payload| {
                     std.debug.print("expected null, found {any}\n", .{actual_payload});
                     return error.TestExpectedEqual;
                 }
@@ -163,15 +166,15 @@ pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void {
         },
 
         .ErrorUnion => {
-            if (expected) |expected_payload| {
-                if (actual) |actual_payload| {
+            if (expected_coerced) |expected_payload| {
+                if (actual_coerced) |actual_payload| {
                     try expectEqual(expected_payload, actual_payload);
                 } else |actual_err| {
                     std.debug.print("expected {any}, found {}\n", .{ expected_payload, actual_err });
                     return error.TestExpectedEqual;
                 }
             } else |expected_err| {
-                if (actual) |actual_payload| {
+                if (actual_coerced) |actual_payload| {
                     std.debug.print("expected {}, found {any}\n", .{ expected_err, actual_payload });
                     return error.TestExpectedEqual;
                 } else |actual_err| {
